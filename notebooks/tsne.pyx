@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.metrics.pairwise import pairwise_distances
 cimport numpy as np
 cimport cython
 
@@ -20,8 +21,10 @@ cimport cython
 # Include usage documentation
 # Find all references to embedding in sklearn & see where else we can document
 # Incorporate into SKLearn
-# Cython deallocate memory
 # PEP8 the code
+# Am I using memviews or returning fulla rrays appropriately?
+# DONE:
+# Cython deallocate memory
 
 from libc.stdlib cimport malloc, free, abs
 
@@ -235,7 +238,7 @@ cdef class QuadTree:
         if self.verbose:
             print("   freed %i cells out of %i" % (cnt[0], self.num_cells))
             print("   freed %i leaves with particles of %i" % (cnt[2], self.num_part))
-                
+
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
@@ -253,11 +256,11 @@ cdef class QuadTree:
                         if child.size > 0:
                             counts[2] +=1
                     free(child)
-    
+
     #@cython.boundscheck(False)
     #@cython.wraparound(False)
     #@cython.cdivision(True)
-    cpdef np.ndarray compute_gradient(self, np.float64_t theta,
+    cdef np.ndarray compute_gradient(self, np.float64_t theta,
                                      np.ndarray[np.float64_t, ndim=1] val_P,
                                      np.ndarray[np.float64_t, ndim=2] pos_reference):
         cdef int n = pos_reference.shape[0]
@@ -269,7 +272,39 @@ cdef class QuadTree:
             sum_Q = self.compute_non_edge_forces(self.root_node, theta, sum_Q, point_index,
                                                 pos_reference, neg_force)
         return pos_force - (neg_force / sum_Q)
-                    
+
+    #@cython.boundscheck(False)
+    #@cython.wraparound(False)
+    #@cython.cdivision(True)
+    cdef np.ndarray compute_gradient_exact(self, np.float64_t theta,
+                                           np.ndarray[np.float64_t, ndim=1] val_P,
+                                           np.ndarray[np.float64_t, ndim=2] pos_reference):
+        cdef np.float64_t sum_Q = 0.0
+        cdef np.float64_t mult = 0.0
+        cdef int i, j
+
+        cdef int n = pos_reference.shape[0]
+        cdef np.ndarray dC = np.zeros((n, 2), dtype='float64')
+        cdef np.ndarray DD = pairwise_distances(pos_reference)
+        cdef np.ndarray  Q = np.zeros((n, n), dtype='float64')
+
+        # Computation of the Q matrix & normalization sum
+        for i in range(pos_reference.shape[0]):
+            for j in range(pos_reference.shape[0]):
+                Q[i, j] = 1. / (1. + DD[i, j])
+                sum_Q += Q[i, j]
+
+        # Computation of the gradient
+        for i in range(pos_reference.shape[0]):
+            for j in range(pos_reference.shape[0]):
+                if i == j: 
+                    continue
+                mult = (val_P[i, j] - (Q[i, j] / sum_Q)) * Q[i, j]
+                for ax in range(2):
+                    dC[i, ax] += mult * (pos_reference[i, ax] - pos_reference[j, ax])
+        return dC
+        
+
     #@cython.boundscheck(False)
     #@cython.wraparound(False)
     #@cython.cdivision(True)
@@ -369,7 +404,7 @@ cdef class QuadTree:
                 # don't get filled in
         return count
 
-def create_quadtree(pos_array, theta=0.5, verbose=0):
+def create_quadtree(pos_array, verbose=0):
     qt = QuadTree(verbose=verbose)
     qt.insert_many(pos_array)
     qt.check_consistency()
@@ -379,5 +414,6 @@ def create_quadtree_compute(pos_array, val_P, theta=0.5, verbose=0):
     qt = QuadTree(verbose=verbose)
     qt.insert_many(pos_array)
     qt.check_consistency()
-    qt.compute_gradient(theta, val_P, pos_array)
+    forces = qt.compute_gradient(theta, val_P, pos_array)
     qt.free()
+    return forces
