@@ -78,7 +78,9 @@ cdef class QuadTree:
     def __cinit__(self, verbose=False, width=None):
         if width is None:
             width = np.array([1., 1.])
+        print("creating root")
         self.root_node = self.create_root(width)
+        print("done")
         self.num_cells = 0
         self.num_part = 0
         self.verbose = verbose
@@ -86,7 +88,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef inline QuadNode* create_root(self, np.ndarray[np.float64_t, ndim=2] width):
+    cdef inline QuadNode* create_root(self, np.ndarray[np.float64_t, ndim=1] width):
         # Create a default root node
         cdef int ax
         root = <QuadNode*> malloc(sizeof(QuadNode))
@@ -178,7 +180,8 @@ cdef class QuadTree:
             root.cum_com[ax] += pos[ax] * frac_new
         # If this node is unoccupied, fill it.
         # Otherwise, we need to insert recursively.
-        #print('%i' % point_index, 'level', root.level, 'cum size is', root.cum_size)
+        if self.verbose:
+            print('%i' % point_index, 'level', root.level, 'cum size is', root.cum_size)
         #if root.level > 4:
         #    print 'MAX LEVEL EXCEEDED'
         #    return
@@ -359,9 +362,9 @@ cdef class QuadTree:
             for i in range(2):
                 delta[i] += node.le[i] + node.w[i] / 2.0  - pos_reference[point_index, i]
                 if self.verbose:
-                    print "pos_reference[point_index=%i,i=%i]=%1.1e6" % (point_index, i, pos_reference[point_index,i])
+                    print "pos_reference[point_index=%i,i=%i]=%1.6e" % (point_index, i, pos_reference[point_index,i])
                     print "nodel.le[i=%i]=%1.1e" % (i, node.le[i]) 
-                    print "nodel.w[i=%i]=%1.1e" % (node.w[i]) 
+                    print "nodel.w[i=%i]=%1.1e" % (i, node.w[i]) 
                     print "delta[i=%i]=%1.6e" % (i, delta[i]) 
                 dist2 += delta[i]**2.0
             print "dist2=%1.6e" % dist2
@@ -420,21 +423,17 @@ cdef class QuadTree:
                 # don't get filled in
         return count
 
-def create_quadtree(pos_output, verbose=0, free=True):
+cdef QuadTree create_quadtree(pos_output, verbose=0):
     pos_output -= pos_output.mean(axis=0)
     width = pos_output.max(axis=0) - pos_output.min(axis=0)
     qt = QuadTree(verbose=verbose, width=width)
     qt.insert_many(pos_output)
     qt.check_consistency()
-    if free:
-        qt.free()
-    else:
-        return qt
+    return qt
 
-def create_quadtree_compute(pij_input, pos_output, theta=0.5, verbose=0):
-    qt = create_quadtree(pos_output, free=False, verbose=verbose)
+def quadtree_compute(pij_input, pos_output, theta=0.5, verbose=0):
+    qt = create_quadtree(pos_output, verbose=verbose)
     forces1 = qt.compute_gradient(theta, pij_input, pos_output)
-    print forces1
     forces2 = qt.compute_gradient_exact(theta, pij_input, pos_output)
     qt.free()
     return forces1, forces2
