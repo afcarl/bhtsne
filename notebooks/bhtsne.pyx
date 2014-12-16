@@ -261,7 +261,7 @@ cdef class QuadTree:
     #@cython.wraparound(False)
     #@cython.cdivision(True)
     cdef np.ndarray compute_gradient(self, np.float64_t theta,
-                                     np.ndarray[np.float64_t, ndim=1] val_P,
+                                     np.ndarray[np.float64_t, ndim=2] val_P,
                                      np.ndarray[np.float64_t, ndim=2] pos_reference):
         cdef int n = pos_reference.shape[0]
         cdef np.ndarray pos_force = np.zeros((n, 2), dtype='float64')
@@ -277,7 +277,7 @@ cdef class QuadTree:
     #@cython.wraparound(False)
     #@cython.cdivision(True)
     cdef np.ndarray compute_gradient_exact(self, np.float64_t theta,
-                                           np.ndarray[np.float64_t, ndim=1] val_P,
+                                           np.ndarray[np.float64_t, ndim=2] val_P,
                                            np.ndarray[np.float64_t, ndim=2] pos_reference):
         cdef np.float64_t sum_Q = 0.0
         cdef np.float64_t mult = 0.0
@@ -308,7 +308,7 @@ cdef class QuadTree:
     #@cython.boundscheck(False)
     #@cython.wraparound(False)
     #@cython.cdivision(True)
-    cdef void compute_edge_forces(self, np.ndarray[np.float64_t, ndim=1] val_P,
+    cdef void compute_edge_forces(self, np.ndarray[np.float64_t, ndim=2] val_P,
                              np.ndarray[np.float64_t, ndim=2] pos_reference,
                              np.ndarray[np.float64_t, ndim=2] force):
         # Sum over the following expression for i not equal to j
@@ -324,7 +324,7 @@ cdef class QuadTree:
                 for dim in range(2):
                     buff[dim] = pos_reference[i, dim] - pos_reference[j, dim]
                     D += buff[dim] ** 2.0  
-                D = val_P[i] / (1.0 + D)
+                D = val_P[i, j] / (1.0 + D)
                 for dim in range(2):
                     force[i, dim] += D * buff[dim]
 
@@ -414,6 +414,8 @@ def create_quadtree_compute(pos_array, val_P, theta=0.5, verbose=0):
     qt = QuadTree(verbose=verbose)
     qt.insert_many(pos_array)
     qt.check_consistency()
-    forces = qt.compute_gradient(theta, val_P, pos_array)
+    forces1 = qt.compute_gradient(theta, val_P, pos_array)
+    print forces1
+    forces2 = qt.compute_gradient_exact(theta, val_P, pos_array)
     qt.free()
-    return forces
+    return forces1, forces2
