@@ -123,7 +123,10 @@ void TSNE::run(double* X, int N, int D, double* Y, int no_dims, double perplexit
     else {      for(int i = 0; i < row_P[N]; i++) val_P[i] *= 12.0; }
 
 	// Initialize solution (randomly)
-	for(int i = 0; i < N * no_dims; i++) Y[i] = randn() * .0001;
+	for(int i = 0; i < N * no_dims; i++) {
+        Y[i] = randn() * .0001;
+        printf("%4.2f", Y[i]);
+    }
 	
 	// Perform main training loop
     if(exact) printf("Done in %4.2f seconds!\nLearning embedding...\n", (float) (end - start) / CLOCKS_PER_SEC);

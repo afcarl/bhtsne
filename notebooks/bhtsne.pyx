@@ -404,18 +404,18 @@ cdef class QuadTree:
                 # don't get filled in
         return count
 
-def create_quadtree(pos_array, verbose=0):
+def create_quadtree(pos_input, verbose=0):
     qt = QuadTree(verbose=verbose)
-    qt.insert_many(pos_array)
+    qt.insert_many(pos_input)
     qt.check_consistency()
     qt.free()
 
-def create_quadtree_compute(pos_array, val_P, theta=0.5, verbose=0):
+def create_quadtree_compute(pos_input, pij_input, pos_output, theta=0.5, verbose=0):
     qt = QuadTree(verbose=verbose)
-    qt.insert_many(pos_array)
+    qt.insert_many(pos_input)
     qt.check_consistency()
-    forces1 = qt.compute_gradient(theta, val_P, pos_array)
+    forces1 = qt.compute_gradient(theta, pij_input, pos_output)
     print forces1
-    forces2 = qt.compute_gradient_exact(theta, val_P, pos_array)
+    forces2 = qt.compute_gradient_exact(theta, pij_input, pos_output)
     qt.free()
     return forces1, forces2
