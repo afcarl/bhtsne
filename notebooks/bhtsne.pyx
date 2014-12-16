@@ -36,30 +36,30 @@ cdef extern from "math.h":
 
 cdef struct QuadNode:
     # Keep track of the center of mass
-    np.float64_t cum_com[2]
+    float cum_com[2]
     # If this is a leaf, the position of the particle within this leaf 
-    np.float64_t cur_pos[2]
+    float cur_pos[2]
     # The number of particles including all 
     # nodes below this one
-    np.uint64_t cum_size
+    int cum_size
     # Number of particles at this node
-    np.uint64_t size
+    int size
     # Index of the particle at this node
-    np.uint64_t point_index
+    int point_index
     # level = 0 is the root node
     # And each subdivision adds 1 to the level
-    np.uint64_t level
+    int level
     # Left edge of this node, normalized to [0,1]
-    np.float64_t le[2] 
+    float le[2] 
     # The center of this node, equal to le + w/2.0
-    np.float64_t c[2] 
+    float c[2] 
     # The width of this node -- used to calculate the opening
     # angle. Equal to width = re - le
-    np.float64_t w[2]
+    float w[2]
 
     # Does this node have children?
     # Default to leaf until we add particles
-    np.uint8_t is_leaf
+    int is_leaf
     # Keep pointers to the child nodes
     QuadNode *children[2][2]
     # Keep a pointer to the parent
@@ -91,7 +91,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef inline QuadNode* create_root(self, np.ndarray[np.float64_t, ndim=1] width):
+    cdef inline QuadNode* create_root(self, float[:] width):
         # Create a default root node
         cdef int ax
         root = <QuadNode*> malloc(sizeof(QuadNode))
@@ -113,7 +113,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef inline QuadNode* create_child(self, QuadNode *parent, np.uint8_t offset[2]):
+    cdef inline QuadNode* create_child(self, QuadNode *parent, int[:] offset):
         # Create a new child node with default parameters
         cdef int ax
         child = <QuadNode *> malloc(sizeof(QuadNode))
@@ -135,7 +135,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef inline QuadNode* select_child(self, QuadNode *node, np.float64_t pos[2]):
+    cdef inline QuadNode* select_child(self, QuadNode *node, float[:] pos):
         # Find which sub-node a position should go into
         # And return the appropriate node
         cdef int offset[2]
@@ -151,7 +151,7 @@ cdef class QuadTree:
         # This instantiates 4 nodes for the current node
         cdef int i = 0
         cdef int j = 0
-        cdef np.uint8_t offset[2] 
+        cdef int offset[2] 
         node.is_leaf = False
         offset[0] = 0
         offset[1] = 0
@@ -164,7 +164,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef void insert(self, QuadNode *root, np.float64_t pos[2], int point_index):
+    cdef void insert(self, QuadNode *root, float[:] pos, int point_index):
         # Introduce a new point into the quadtree
         # by recursively inserting it and subdividng as necessary
         cdef QuadNode *child
@@ -227,10 +227,10 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef void insert_many(self, np.ndarray[np.float64_t, ndim=2] pos_array):
+    cdef void insert_many(self, float[:,:] pos_array):
         cdef int nrows = pos_array.shape[0]
         cdef int i, ax
-        cdef np.float64_t row[2]
+        cdef float row[2]
         for i in range(nrows):
             for ax in range(2):
                 row[ax] = pos_array[i, ax]
@@ -242,7 +242,7 @@ cdef class QuadTree:
             print("part COM %1.3e %1.3e" % (pos_array[:,0].mean(), pos_array[:,1].mean()))
 
     cdef int free(self):
-        cdef np.ndarray cnt = np.zeros(3, dtype='int32')
+        cdef int[:] cnt = np.zeros(3, dtype='int')
         self.free_recursive(self.root_node, cnt)
         free(self.root_node)
         if self.verbose:
@@ -253,7 +253,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef void free_recursive(self, QuadNode *root, np.ndarray[np.int32_t, ndim=1] counts):
+    cdef void free_recursive(self, QuadNode *root, int[:] counts):
         cdef int i, j    
         cdef QuadNode* child
         if not root.is_leaf:
@@ -271,77 +271,49 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef np.ndarray compute_gradient(self, np.float64_t theta,
-                                     np.ndarray[np.float64_t, ndim=2] val_P,
-                                     np.ndarray[np.float64_t, ndim=2] pos_reference):
-        cdef int ax 
+    cdef float[:,:] compute_gradient(self, float theta,
+                                    float[:,:] val_P,
+                                    float[:,:] pos_reference):
+        cdef int ax, i, j
         cdef int n = pos_reference.shape[0]
-        cdef np.ndarray pos_force = np.zeros((n, 2), dtype='float64')
-        cdef np.ndarray neg_force = np.zeros((n, 2), dtype='float64')
-        cdef np.ndarray force = np.zeros(2, dtype='float64')
-        cdef np.uint64_t point_index
-        cdef np.float64_t sum_Q
+        cdef float[:,:] pos_force = np.zeros((n, 2), dtype='float')
+        cdef float[:,:] neg_force = np.zeros((n, 2), dtype='float')
+        cdef float[:,:] tot_force = np.zeros((n, 2), dtype='float')
+        cdef float[:] force = np.zeros(2, dtype='float')
+        cdef int point_index
+        cdef float sum_Q
         self.compute_edge_forces(val_P, pos_reference, pos_force)
         for point_index in range(pos_reference.shape[0]):
             for ax in range(2):
                 force[ax] = 0.0
             sum_Q = self.compute_non_edge_forces(self.root_node, theta, sum_Q, point_index,
-                                                pos_reference, force)
+                                                 pos_reference, force)
             for ax in range(2):
                 neg_force[point_index, ax] = force[ax]
         if self.verbose:
             for point_index in range(pos_reference.shape[0]):
                 for ax in range(2):
                     print("neg_force ", point_index, ax, neg_force[point_index, ax])
-        return pos_force - (neg_force / sum_Q)
+        for i in range(pos_force.shape[0]):
+            for j in range(pos_force.shape[1]):
+                tot_force[i, j] = pos_force[i, j] - (neg_force[i, j] / sum_Q)
+
+        return tot_force
 
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef np.ndarray compute_gradient_parallel(self, np.float64_t theta,
-                                              np.ndarray[np.float64_t, ndim=2] val_P,
-                                              np.ndarray[np.float64_t, ndim=2] pos_reference):
-        cdef int ax 
-        cdef int n = pos_reference.shape[0]
-        cdef np.ndarray[np.float64_t, ndim=2] pos_force = np.zeros((n, 2), dtype='float64')
-        cdef np.ndarray[np.float64_t, ndim=2] neg_force = np.zeros((n, 2), dtype='float64')
-        cdef np.ndarray[np.float64_t, ndim=1] force = np.zeros(2, dtype='float64')
-        cdef np.uint64_t point_index
-        cdef double sum_Q = 0.0
-        cdef int num_threads = openmp.omp_get_num_threads()
-
-        self.compute_edge_forces(val_P, pos_reference, pos_force)
-        for point_index in prange(pos_reference.shape[0], nogil=True, 
-                                  num_threads=num_threads,
-                                  schedule='guided'):
-            # inplace modification so sum_Q is thread shared
-            for ax in range(2):
-                force[ax] = 0.0
-            sum_Q += self.compute_non_edge_forces(self.root_node, theta, 0.0, 
-                                                  point_index, pos_reference, 
-                                                  force)
-            for ax in range(2):
-                neg_force[point_index, ax] = force[ax]
-        if self.verbose:
-            for point_index in range(pos_reference.shape[0]):
-                for ax in range(2):
-                    print("neg_force ", point_index, ax, neg_force[point_index, ax])
-        return pos_force - (neg_force / sum_Q)
-
-    @cython.boundscheck(False)
-    @cython.wraparound(False)
-    @cython.cdivision(True)
-    cdef np.ndarray compute_gradient_exact(self, np.float64_t theta,
-                                           np.ndarray[np.float64_t, ndim=2] val_P,
-                                           np.ndarray[np.float64_t, ndim=2] pos_reference):
-        cdef np.float64_t sum_Q = 0.0
-        cdef np.float64_t mult = 0.0
+    cdef float[:,:] compute_gradient_exact(self, float theta,
+                                           float[:,:] val_P,
+                                           float[:,:] pos_reference):
+        cdef float sum_Q = 0.0
+        cdef float mult = 0.0
         cdef int i, j
 
         cdef int n = pos_reference.shape[0]
-        cdef np.ndarray dC = np.zeros((n, 2), dtype='float64')
-        cdef np.ndarray DD = pairwise_distances(pos_reference)
-        cdef np.ndarray  Q = np.zeros((n, n), dtype='float64')
+        cdef float[:,:] dC = np.zeros((n, 2), dtype='float')
+        cdef float[:,:] DD = pairwise_distances(pos_reference)
+        cdef float[:,:] Q = np.zeros((n, n), dtype='float')
 
         # Computation of the Q matrix & normalization sum
         for i in range(pos_reference.shape[0]):
@@ -363,14 +335,14 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef void compute_edge_forces(self, np.ndarray[np.float64_t, ndim=2] val_P,
-                             np.ndarray[np.float64_t, ndim=2] pos_reference,
-                             np.ndarray[np.float64_t, ndim=2] force):
+    cdef void compute_edge_forces(self, float[:,:] val_P,
+                                  float[:,:] pos_reference,
+                                  float[:,:] force):
         # Sum over the following expression for i not equal to j
         # p_ij Q (1 + ||y_i - y_j||^2)^-1 (y_i - y_j)
         cdef int i, j, dim
-        cdef np.float64_t buff[2]
-        cdef np.float64_t D
+        cdef float buff[2]
+        cdef float D
         for i in range(pos_reference.shape[0]):
             for j in range(pos_reference.shape[1]):
                 if i == j : 
@@ -387,18 +359,18 @@ cdef class QuadTree:
     @cython.wraparound(False)
     @cython.cdivision(True)
     cdef double compute_non_edge_forces(self, QuadNode* node, 
-                                 np.float64_t theta,
+                                 float theta,
                                  double sum_Q,
-                                 np.uint64_t point_index,
-                                 np.ndarray[np.float64_t, ndim=2] pos_reference,
-                                 np.ndarray[np.float64_t, ndim=1] force) nogil:
+                                 int point_index,
+                                 float[:, :] pos_reference,
+                                 float[:] force) nogil:
         # Compute the t-SNE force on the point in pos_reference given by point_index
         cdef QuadNode* child
         cdef int i, j
         cdef int summary = 0
-        cdef np.float64_t dist2, mult, qijZ
-        cdef np.float64_t delta[2] 
-        cdef np.float64_t wmax = 0.0
+        cdef float dist2, mult, qijZ
+        cdef float delta[2] 
+        cdef float wmax = 0.0
 
         for i in range(2):
             delta[i] = 0.0
