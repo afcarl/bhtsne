@@ -52,7 +52,7 @@ cdef struct QuadNode:
     np.float64_t c[2] 
     # The width of this node -- used to calculate the opening
     # angle. Equal to width = re - le
-    np.float64_t w
+    np.float64_t w[2]
 
     # Does this node have children?
     # Default to leaf until we add particles
@@ -75,8 +75,10 @@ cdef class QuadTree:
     # Spit out diagnostic information?
     cdef int verbose
     
-    def __cinit__(self, verbose=False):
-        self.root_node = self.create_root()
+    def __cinit__(self, verbose=False, width=None):
+        if width is None:
+            width = np.array([1., 1.])
+        self.root_node = self.create_root(width)
         self.num_cells = 0
         self.num_part = 0
         self.verbose = verbose
@@ -84,7 +86,7 @@ cdef class QuadTree:
     @cython.boundscheck(False)
     @cython.wraparound(False)
     @cython.cdivision(True)
-    cdef inline QuadNode* create_root(self):
+    cdef inline QuadNode* create_root(self, np.ndarray[np.float64_t, ndim=2] width):
         # Create a default root node
         cdef int ax
         root = <QuadNode*> malloc(sizeof(QuadNode))
@@ -93,11 +95,11 @@ cdef class QuadTree:
         root.level = 0
         root.cum_size = 0
         root.size = 0
-        root.w = 1.
         root.point_index = -1
         for ax in range(2):
-            root.le[ax] = 0.
-            root.c[ax] = root.le[ax] + root.w / 2.0
+            root.w[ax] = width[ax]
+            root.le[ax] = 0. - root.w[ax] / 2.0
+            root.c[ax] = 0.0
             root.cum_com[ax] = 0.
             root.cur_pos[ax] = -1.
         self.num_cells += 1
@@ -115,11 +117,11 @@ cdef class QuadTree:
         child.level = parent.level + 1
         child.size = 0
         child.cum_size = 0
-        child.w = parent.w / 2.0
         child.point_index = -1
         for ax in range(2):
-            child.le[ax] = parent.le[ax] + offset[ax] * parent.w / 2.0
-            child.c[ax] = child.le[ax] + child.w / 2.0
+            child.w[ax] = parent.w[ax] / 2.0
+            child.le[ax] = parent.le[ax] + offset[ax] * parent.w[ax] / 2.0
+            child.c[ax] = child.le[ax] + child.w[ax] / 2.0
             child.cum_com[ax] = 0.
             child.cur_pos[ax] = -1.
         self.num_cells += 1
@@ -134,7 +136,7 @@ cdef class QuadTree:
         cdef int offset[2]
         cdef int ax
         for ax in range(2):
-            offset[ax] = (pos[ax] - (node.le[ax] + node.w / 2.0)) > 0.
+            offset[ax] = (pos[ax] - (node.le[ax] + node.w[ax] / 2.0)) > 0.
         return node.children[offset[0]][offset[1]]
 
     @cython.boundscheck(False)
@@ -193,7 +195,9 @@ cdef class QuadTree:
             # If necessary, subdivide this node before
             # descending
             if root.is_leaf:
-                # print('%i' % point_index, 'subdividing')
+                if self.verbose:
+                    print('%i' % point_index, 'subdividing', 
+                          root.cum_com[0], root.cum_com[1])
                 self.subdivide(root)
             # We have two points to relocate: the one previously
             # at this node, and the new one we're attempting
@@ -271,6 +275,8 @@ cdef class QuadTree:
         for point_index in range(pos_reference.shape[0]):
             sum_Q = self.compute_non_edge_forces(self.root_node, theta, sum_Q, point_index,
                                                 pos_reference, neg_force)
+            if self.verbose:
+                print "neg_force[%i,:]=" % point_index, neg_force[point_index, :]
         return pos_force - (neg_force / sum_Q)
 
     #@cython.boundscheck(False)
@@ -342,6 +348,7 @@ cdef class QuadTree:
         cdef int i, j
         cdef np.float64_t dist2, mult, qijZ
         cdef np.float64_t delta[2]
+        cdef np.float64_t wmax = 0.0
 
         # There are no points below this node if cum_size == 0
         # so do not bother to calculate any force contributions
@@ -350,14 +357,23 @@ cdef class QuadTree:
             dist2 = 0.0
             # Compute distance between node center of mass and the reference point
             for i in range(2):
-                delta[i] += node.le[i] + node.w / 2.0  - pos_reference[point_index, i]
+                delta[i] += node.le[i] + node.w[i] / 2.0  - pos_reference[point_index, i]
+                if self.verbose:
+                    print "pos_reference[point_index=%i,i=%i]=%1.1e6" % (point_index, i, pos_reference[point_index,i])
+                    print "nodel.le[i=%i]=%1.1e" % (i, node.le[i]) 
+                    print "nodel.w[i=%i]=%1.1e" % (node.w[i]) 
+                    print "delta[i=%i]=%1.6e" % (i, delta[i]) 
                 dist2 += delta[i]**2.0
+            print "dist2=%1.6e" % dist2
             # Check whether we can use this node as a summary
             # It's a summary node if the angular size as measured from the point
             # is relatively small (w.r.t. to theta) or if it is a leaf node.
             # If it can be summarized, we use the cell center of mass 
             # Otherwise, we go a higher level of resolution and into the leaves.
-            if node.is_leaf or (node.w / sqrt(dist2) < theta):
+            for i in range(2):
+                wmax = max(wmax, node.w[i])
+
+            if node.is_leaf or (wmax / sqrt(dist2) < theta):
                 # Compute the t-SNE force between the reference point and the current node
                 qijZ = 1.0 / (1.0 + dist2)
                 sum_Q += node.cum_size * qijZ
@@ -404,16 +420,19 @@ cdef class QuadTree:
                 # don't get filled in
         return count
 
-def create_quadtree(pos_input, verbose=0):
-    qt = QuadTree(verbose=verbose)
-    qt.insert_many(pos_input)
+def create_quadtree(pos_output, verbose=0, free=True):
+    pos_output -= pos_output.mean(axis=0)
+    width = pos_output.max(axis=0) - pos_output.min(axis=0)
+    qt = QuadTree(verbose=verbose, width=width)
+    qt.insert_many(pos_output)
     qt.check_consistency()
-    qt.free()
+    if free:
+        qt.free()
+    else:
+        return qt
 
-def create_quadtree_compute(pos_input, pij_input, pos_output, theta=0.5, verbose=0):
-    qt = QuadTree(verbose=verbose)
-    qt.insert_many(pos_input)
-    qt.check_consistency()
+def create_quadtree_compute(pij_input, pos_output, theta=0.5, verbose=0):
+    qt = create_quadtree(pos_output, free=False, verbose=verbose)
     forces1 = qt.compute_gradient(theta, pij_input, pos_output)
     print forces1
     forces2 = qt.compute_gradient_exact(theta, pij_input, pos_output)
