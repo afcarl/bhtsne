@@ -350,8 +350,11 @@ cdef class QuadTree:
         cdef QuadNode* child
         cdef int i, j
         cdef np.float64_t dist2, mult, qijZ
-        cdef np.float64_t delta[2]
+        cdef np.float64_t delta[2] 
         cdef np.float64_t wmax = 0.0
+
+        for i in range(2):
+            delta[i] = 0.0
 
         # There are no points below this node if cum_size == 0
         # so do not bother to calculate any force contributions
@@ -360,14 +363,14 @@ cdef class QuadTree:
             dist2 = 0.0
             # Compute distance between node center of mass and the reference point
             for i in range(2):
-                delta[i] += node.le[i] + node.w[i] / 2.0  - pos_reference[point_index, i]
+                delta[i] += pos_reference[point_index, i] - node.cum_com[i] 
                 if self.verbose:
                     print "pos_reference[point_index=%i,i=%i]=%1.6e" % (point_index, i, pos_reference[point_index,i])
-                    print "nodel.le[i=%i]=%1.1e" % (i, node.le[i]) 
-                    print "nodel.w[i=%i]=%1.1e" % (i, node.w[i]) 
+                    print "node.cum_com[i=%i]=%1.1e" % (i, node.cum_com[i])
                     print "delta[i=%i]=%1.6e" % (i, delta[i]) 
                 dist2 += delta[i]**2.0
-            print "dist2=%1.6e" % dist2
+            if self.verbose:
+                print "dist2=%1.6e" % dist2
             # Check whether we can use this node as a summary
             # It's a summary node if the angular size as measured from the point
             # is relatively small (w.r.t. to theta) or if it is a leaf node.
@@ -424,7 +427,7 @@ cdef class QuadTree:
         return count
 
 cdef QuadTree create_quadtree(pos_output, verbose=0):
-    pos_output -= pos_output.mean(axis=0)
+    # pos_output -= pos_output.mean(axis=0)
     width = pos_output.max(axis=0) - pos_output.min(axis=0)
     qt = QuadTree(verbose=verbose, width=width)
     qt.insert_many(pos_output)
