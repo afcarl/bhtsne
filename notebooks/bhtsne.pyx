@@ -1,7 +1,6 @@
 import numpy as np
 from sklearn.metrics.pairwise import pairwise_distances
-from cython.parallel import prange
-from cython.parallel cimport parallel
+from cython.parallel import prange, parallel
 cimport numpy as np
 cimport cython
 cimport openmp
@@ -10,15 +9,6 @@ cimport openmp
 # original code by Laurens van der Maaten
 # for reference implemenations and papers describing the technique:
 # http://homepage.tudelft.nl/19j49/t-SNE.html
-
-# Quadtree checks:
-# X Num of particles conserved
-# X CoM of root nodes = CoM of particles
-# X Num of leaves with particles when freed = Num of particles
-# X Num of cells freed = num of cells created
-#   t-SNE forces make sense for just a few points, like N=5
-#   t-SNE forces are approximately the same when theta=0.5 and theta=0
-#   t-SNE forces are approximately the same between BH case and the N^3 calculation
 
 # TODO:
 # Include usage documentation
@@ -77,6 +67,8 @@ cdef class QuadTree:
     cdef int num_part
     # Spit out diagnostic information?
     cdef int verbose
+    # Diagnostic variable holding the depth as we visit nodes on the tree
+    cdef int cur_depth
     
     def __cinit__(self, verbose=False, width=None):
         if width is None:
@@ -84,6 +76,7 @@ cdef class QuadTree:
         self.root_node = self.create_root(width)
         self.num_cells = 0
         self.num_part = 0
+        self.cur_depth = 0
         self.verbose = verbose
 
     @cython.boundscheck(False)
@@ -275,20 +268,27 @@ cdef class QuadTree:
     cdef float[:,:] compute_gradient(self, float theta,
                                     float[:,:] val_P,
                                     float[:,:] pos_reference):
-        cdef int ax, i, j
+        cdef int ax = 0
+        cdef int i = 0
+        cdef int j = 0
         cdef int n = pos_reference.shape[0]
         cdef float[:,:] pos_force = np.zeros((n, 2), dtype='f32')
         cdef float[:,:] neg_force = np.zeros((n, 2), dtype='f32')
         cdef float[:,:] tot_force = np.zeros((n, 2), dtype='f32')
         cdef float[:] force = np.zeros(2, dtype='f32')
         cdef int point_index
-        cdef float sum_Q
+        cdef float sum_Q = 0.0
+        cdef float[:] iQ = np.zeros(1, dtype='f32')
         self.compute_edge_forces(val_P, pos_reference, pos_force)
-        for point_index in range(pos_reference.shape[0]):
+        for point_index in range(n):
             for ax in range(2): force[ax] = 0.0
-            sum_Q = self.compute_non_edge_forces(self.root_node, theta, sum_Q, point_index,
-                                                 pos_reference, force)
+            self.cur_depth = 0
+            iQ[0] = 0.0
+            self.compute_non_edge_forces(self.root_node, theta, iQ, point_index,
+                                         pos_reference, force)
+            sum_Q += iQ[0]
             for ax in range(2): neg_force[point_index, ax] = force[ax]
+
         if self.verbose:
             for point_index in range(pos_reference.shape[0]):
                 for ax in range(2):
@@ -296,6 +296,7 @@ cdef class QuadTree:
         for i in range(pos_force.shape[0]):
             for j in range(pos_force.shape[1]):
                 tot_force[i, j] = pos_force[i, j] - (neg_force[i, j] / sum_Q)
+                print("tot_force[%i, %i] = pos_force[i,j]~%1.3e - (neg_force[i,j]~%1.3e / sum_Q~%1.3e) = %1.3e" % (i, j, pos_force[i,j], neg_force[i,j], sum_Q, tot_force[i,j]))
         return tot_force
 
     @cython.boundscheck(False)
@@ -337,12 +338,12 @@ cdef class QuadTree:
                                   float[:,:] pos_reference,
                                   float[:,:] force):
         # Sum over the following expression for i not equal to j
-        # p_ij Q (1 + ||y_i - y_j||^2)^-1 (y_i - y_j)
+        # grad_i = p_ij (1 + ||y_i - y_j||^2)^-1 (y_i - y_j)
         cdef int i, j, dim
         cdef float buff[2]
         cdef float D
         for i in range(pos_reference.shape[0]):
-            for j in range(pos_reference.shape[1]):
+            for j in range(pos_reference.shape[0]):
                 if i == j : 
                     continue
                 D = 0.0
@@ -358,10 +359,10 @@ cdef class QuadTree:
     @cython.cdivision(True)
     cdef double compute_non_edge_forces(self, QuadNode* node, 
                                  float theta,
-                                 double sum_Q,
+                                 float[:] sum_Q,
                                  int point_index,
                                  float[:, :] pos_reference,
-                                 float[:] force) nogil:
+                                 float[:] force):
         # Compute the t-SNE force on the point in pos_reference given by point_index
         cdef QuadNode* child
         cdef int i, j
@@ -395,7 +396,7 @@ cdef class QuadTree:
             if node.is_leaf or summary:
                 # Compute the t-SNE force between the reference point and the current node
                 qijZ = 1.0 / (1.0 + dist2)
-                sum_Q += node.cum_size * qijZ
+                sum_Q[0] += node.cum_size * qijZ
                 mult = node.cum_size * qijZ * qijZ
                 for ax in range(2):
                     force[ax] += mult * delta[ax]
@@ -404,10 +405,13 @@ cdef class QuadTree:
                 for i in range(2):
                     for j in range(2):
                         child = node.children[i][j]
-                        sum_Q += self.compute_non_edge_forces(child, theta, sum_Q, 
-                                                              point_index,
-                                                              pos_reference, force)
-            return sum_Q
+                        if child.cum_size == 0: 
+                            continue
+                        self.cur_depth += 1
+                        self.compute_non_edge_forces(child, theta, sum_Q, 
+                                                     point_index,
+                                                     pos_reference, force)
+                        self.cur_depth -= 1
         
     cdef int check_consistency(self):
         cdef int count 
@@ -472,3 +476,14 @@ def quadtree_compute(pij_input, pos_output, theta=0.5, verbose=0):
     f2[:,:] = forces1
     qt.free()
     return f1, f2
+
+
+def compute_gradient(pij_input, pos_output, theta=0.5, verbose=0):
+    pij_input = pij_input.astype('f32')
+    pos_output = pos_output.astype('f32')
+    qt = create_quadtree(pos_output, verbose=verbose)
+    forces = qt.compute_gradient(theta, pij_input, pos_output)
+    f = np.zeros(forces.shape, dtype='f32')
+    f[:,:] = forces
+    qt.free()
+    return f

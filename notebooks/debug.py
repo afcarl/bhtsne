@@ -4,6 +4,18 @@ import sklearn.manifold
 import scipy
 from sklearn.metrics.pairwise import pairwise_distances
 
+# Quadtree checks:
+# X Num of particles conserved
+# X CoM of root nodes = CoM of particles
+# X Num of leaves with particles when freed = Num of particles
+# X Num of cells freed = num of cells created
+# X t-SNE forces make sense for just a few points, like N=5
+#   t-SNE forces are approximately the same when theta=0.5 and theta=0
+#   t-SNE forces are approx the same between parallel case and single
+#   Changes tests to sklearn style
+# This doesn't involve van der Maaten's 2nd perlexity method, which only
+# calculates pij over nearest neighbors
+
 
 def test1():
     """ This case with two particles test the tree with only a single
@@ -44,6 +56,10 @@ def test3():
     test(pos_input, pos_output, grad_output, perplexity=10.0)
 
 
+def test_parallel():
+    pass
+
+
 def tree_consistency(verbose=False):
     """ Ensure tree-level sanity. Checks that the number of particles
         entered and the number freed are equal.
@@ -61,11 +77,11 @@ def test(pos_input, pos_output, grad_output, verbose=False, perplexity=0.1):
 
     grad_bh, grad_exact = bhtsne.quadtree_compute(pij_input, pos_output,
                                                   verbose=verbose)
-    assert np.allclose(grad_bh, grad_output, 1e-4)
+    assert np.allclose(grad_bh, grad_output, 1e-4), (grad_bh, grad_output)
     return grad_bh
 
 if __name__ == '__main__':
+    test3()
     test1()
     test2()
-    test3()
     tree_consistency(verbose=False)
