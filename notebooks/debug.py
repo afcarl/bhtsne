@@ -48,14 +48,14 @@ def tree_consistency(verbose=False):
     """ Ensure tree-level sanity. Checks that the number of particles
         entered and the number freed are equal.
     """
-    pos_output = np.loadtxt(open("t64.rand.csv", "r"))
-    consistency_check = bhtsne.create_quadtree(pos_output, verbose=verbose)
-    assert consistency_check == 1
+    pos_output = np.loadtxt(open("t64.rand.csv", "r"), delimiter=',')
+    consistency_check = bhtsne.consistency_checks(pos_output, verbose=verbose)
+    assert consistency_check
 
 
-def test(pos_input, pos_output, grad_output, verbose=True, perplexity=0.1):
+def test(pos_input, pos_output, grad_output, verbose=False, perplexity=0.1):
     distances = pairwise_distances(pos_input)
-    args = distances, perplexity, True
+    args = distances, perplexity, verbose
     pij_input = sklearn.manifold.t_sne._joint_probabilities(*args)
     pij_input = scipy.spatial.distance.squareform(pij_input)
 
@@ -68,4 +68,4 @@ if __name__ == '__main__':
     test1()
     test2()
     test3()
-    tree_consistency()
+    tree_consistency(verbose=False)
